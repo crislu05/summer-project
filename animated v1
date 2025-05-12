@@ -1,0 +1,121 @@
+import numpy as np
+from scipy.integrate import solve_ivp
+import plotly.graph_objs as go
+import plotly.io as pio
+pio.renderers.default = 'browser'
+
+# ----------------------------
+# Constants
+# ----------------------------
+G = 6.67430e-11
+c = 3e8
+M = 8.2e36
+AU = 1.496e11
+a_spin = 0.9 * G * M / c**2
+
+# ----------------------------
+# Initial conditions
+# ----------------------------
+e = 0.88
+r0 = 1.8e13
+v0 = np.sqrt(G * M * (1 + e) / r0)
+
+initial_conditions = [
+    r0, 0, 0.2 * r0,
+    0, v0, 0.1 * v0
+]
+
+# ----------------------------
+# Differential equations
+# ----------------------------
+def derivatives(t, y):
+    x, y_, z, vx, vy, vz = y
+    r_vec = np.array([x, y_, z])
+    v_vec = np.array([vx, vy, vz])
+    r = np.linalg.norm(r_vec)
+    a_grav = -G * M * r_vec / r**3
+    schwarz_factor = (3 * G * M) / (r * c**2)
+    a_schwarz = schwarz_factor * a_grav
+    L_vec = np.cross(r_vec, v_vec)
+    a_kerr = (2 * G * a_spin / (c**2 * r**3)) * np.cross(L_vec, r_vec)
+    a_total = a_grav + a_schwarz + a_kerr
+    return [vx, vy, vz, *a_total]
+
+# ----------------------------
+# Time integration
+# ----------------------------
+T_orbit = 5.06e8
+num_orbits = 5
+t_span = (0, num_orbits * T_orbit)
+t_eval = np.linspace(*t_span, 2000)
+
+sol = solve_ivp(derivatives, t_span, initial_conditions, t_eval=t_eval)
+x = sol.y[0] / AU
+y = sol.y[1] / AU
+z = sol.y[2] / AU
+
+# ----------------------------
+# Create animation frames
+# ----------------------------
+frames = []
+for i in range(2, len(x), 2):
+    trace_orbit = go.Scatter3d(
+        x=x[:i], y=y[:i], z=z[:i],
+        mode='lines',
+        line=dict(color='blue', width=3)
+    )
+    trace_dot = go.Scatter3d(
+        x=[x[i-1]], y=[y[i-1]], z=[z[i-1]],
+        mode='markers',
+        marker=dict(size=5, color='red')
+    )
+    black_hole = go.Scatter3d(
+        x=[0], y=[0], z=[0],
+        mode='markers',
+        marker=dict(size=6, color='black'),
+        name='Sgr A*'
+    )
+    frames.append(go.Frame(data=[trace_orbit, trace_dot, black_hole]))
+
+# ----------------------------
+# Layout and figure
+# ----------------------------
+layout = go.Layout(
+    title='Animated S2 Orbit around a Kerr Black Hole',
+    scene=dict(
+        xaxis_title='x [AU]',
+        yaxis_title='y [AU]',
+        zaxis_title='z [AU]',
+        aspectmode='data'
+    ),
+    legend=dict(x=0.05, y=0.95),
+    updatemenus=[dict(
+        type='buttons',
+        showactive=False,
+        buttons=[
+            dict(label='Play', method='animate', args=[None, {"frame": {"duration": 30, "redraw": True},
+                                                              "fromcurrent": True, "mode": "immediate"}]),
+            dict(label='Pause', method='animate', args=[[None], {"mode": "immediate", "frame": {"duration": 0}}])
+        ]
+    )]
+)
+
+# Initial plot includes orbit, moving dot, and black hole
+fig = go.Figure(
+    data=[
+        go.Scatter3d(x=[x[0]], y=[y[0]], z=[z[0]],
+                     mode='lines',
+                     line=dict(color='blue', width=3)),
+        go.Scatter3d(x=[x[0]], y=[y[0]], z=[z[0]],
+                     mode='markers',
+                     marker=dict(size=5, color='red')),
+        go.Scatter3d(x=[0], y=[0], z=[0],
+                     mode='markers',
+                     marker=dict(size=6, color='black'),
+                     name='Sgr A*')
+    ],
+    layout=layout,
+    frames=frames
+)
+
+fig.show()
