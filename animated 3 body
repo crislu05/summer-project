@@ -26,19 +26,54 @@ v_peri = np.sqrt(G * M * (1 + e) / r_peri)
 v_apo = np.sqrt(G * M * (1 - e) / r_apo)
 
 # ----------------------------
-# Initial Conditions
+# Initial Conditions for Star 1 and Star 2 with Inclination
 # ----------------------------
+inclination_angle = np.radians(60)  # 60 degrees inclination to the equatorial plane (more dramatic)
+azimuth_angle = np.radians(90)  # Angle in the x-y plane (90 degrees to show difference)
+
+# Transformation matrix for the inclination and azimuth rotation
+def rotate_coordinates(x, y, z, inclination, azimuth):
+    # Rotate around z-axis (azimuthal angle)
+    x_rot = x * np.cos(azimuth) - y * np.sin(azimuth)
+    y_rot = x * np.sin(azimuth) + y * np.cos(azimuth)
+    z_rot = z
+
+    # Rotate around x-axis (inclination angle)
+    x_final = x_rot
+    y_final = y_rot * np.cos(inclination) - z_rot * np.sin(inclination)
+    z_final = y_rot * np.sin(inclination) + z_rot * np.cos(inclination)
+    
+    return x_final, y_final, z_final
+
 # Star 1 starts at pericenter
 initial_conditions_star_1 = [
-    r_peri, 0, 0.2 * r_peri,
-    0, v_peri, 0.1 * v_peri
+    r_peri, 0, 0.2 * r_peri,  # position (x, y, z)
+    0, v_peri, 0.1 * v_peri  # velocity (vx, vy, vz)
 ]
+# Rotate Star 1's initial conditions
+initial_conditions_star_1[0], initial_conditions_star_1[1], initial_conditions_star_1[2] = rotate_coordinates(
+    initial_conditions_star_1[0], initial_conditions_star_1[1], initial_conditions_star_1[2],
+    inclination_angle, azimuth_angle
+)
+# Velocity needs to be adjusted for inclination and azimuth
+vx1, vy1, vz1 = initial_conditions_star_1[3], initial_conditions_star_1[4], initial_conditions_star_1[5]
+vx1, vy1, vz1 = rotate_coordinates(vx1, vy1, vz1, inclination_angle, azimuth_angle)
+initial_conditions_star_1[3], initial_conditions_star_1[4], initial_conditions_star_1[5] = vx1, vy1, vz1
 
 # Star 2 starts at apocenter, on opposite side
 initial_conditions_star_2 = [
     -r_apo, 0, 0.2 * r_apo,
     0, -v_apo, -0.1 * v_apo
 ]
+# Rotate Star 2's initial conditions
+initial_conditions_star_2[0], initial_conditions_star_2[1], initial_conditions_star_2[2] = rotate_coordinates(
+    initial_conditions_star_2[0], initial_conditions_star_2[1], initial_conditions_star_2[2],
+    inclination_angle, azimuth_angle
+)
+# Velocity needs to be adjusted for inclination and azimuth
+vx2, vy2, vz2 = initial_conditions_star_2[3], initial_conditions_star_2[4], initial_conditions_star_2[5]
+vx2, vy2, vz2 = rotate_coordinates(vx2, vy2, vz2, inclination_angle, azimuth_angle)
+initial_conditions_star_2[3], initial_conditions_star_2[4], initial_conditions_star_2[5] = vx2, vy2, vz2
 
 # ----------------------------
 # Differential Equations
