@@ -1,0 +1,143 @@
+import numpy as np
+from scipy.integrate import solve_ivp
+import plotly.graph_objs as go
+import plotly.io as pio
+pio.renderers.default = 'browser'
+
+# ----------------------------
+# Constants
+# ----------------------------
+G = 6.67430e-11
+c = 3e8
+M = 8.2e36
+AU = 1.496e11
+a_spin = 0.9 * G * M / c**2
+
+# ----------------------------
+# Orbital Parameters (more relativistic)
+# ----------------------------
+e = 0.88
+r_peri = 5e11  # pericenter ~3.3 AU
+a = r_peri / (1 - e)
+r_apo = a * (1 + e)
+
+v_peri = np.sqrt(G * M * (1 + e) / r_peri)
+v_apo = np.sqrt(G * M * (1 - e) / r_apo)
+
+# ----------------------------
+# Initial Conditions with Inclination
+# ----------------------------
+inclination_angle = np.radians(60)
+azimuth_angle = np.radians(90)
+
+def rotate_coordinates(x, y, z, inclination, azimuth):
+    x_rot = x * np.cos(azimuth) - y * np.sin(azimuth)
+    y_rot = x * np.sin(azimuth) + y * np.cos(azimuth)
+    z_rot = z
+    x_final = x_rot
+    y_final = y_rot * np.cos(inclination) - z_rot * np.sin(inclination)
+    z_final = y_rot * np.sin(inclination) + z_rot * np.cos(inclination)
+    return x_final, y_final, z_final
+
+initial_conditions_star_1 = [r_peri, 0, 0.2 * r_peri, 0, v_peri, 0.1 * v_peri]
+initial_conditions_star_1[0], initial_conditions_star_1[1], initial_conditions_star_1[2] = rotate_coordinates(
+    initial_conditions_star_1[0], initial_conditions_star_1[1], initial_conditions_star_1[2],
+    inclination_angle, azimuth_angle
+)
+vx1, vy1, vz1 = initial_conditions_star_1[3], initial_conditions_star_1[4], initial_conditions_star_1[5]
+vx1, vy1, vz1 = rotate_coordinates(vx1, vy1, vz1, inclination_angle, azimuth_angle)
+initial_conditions_star_1[3], initial_conditions_star_1[4], initial_conditions_star_1[5] = vx1, vy1, vz1
+
+initial_conditions_star_2 = [-r_apo, 0, 0.2 * r_apo, 0, -v_apo, -0.1 * v_apo]
+initial_conditions_star_2[0], initial_conditions_star_2[1], initial_conditions_star_2[2] = rotate_coordinates(
+    initial_conditions_star_2[0], initial_conditions_star_2[1], initial_conditions_star_2[2],
+    inclination_angle, azimuth_angle
+)
+vx2, vy2, vz2 = initial_conditions_star_2[3], initial_conditions_star_2[4], initial_conditions_star_2[5]
+vx2, vy2, vz2 = rotate_coordinates(vx2, vy2, vz2, inclination_angle, azimuth_angle)
+initial_conditions_star_2[3], initial_conditions_star_2[4], initial_conditions_star_2[5] = vx2, vy2, vz2
+
+# ----------------------------
+# Differential Equations
+# ----------------------------
+def derivatives(t, y):
+    x1, y1, z1, vx1, vy1, vz1, x2, y2, z2, vx2, vy2, vz2 = y
+    r_vec1 = np.array([x1, y1, z1])
+    v_vec1 = np.array([vx1, vy1, vz1])
+    r_vec2 = np.array([x2, y2, z2])
+    v_vec2 = np.array([vx2, vy2, vz2])
+    r1 = np.linalg.norm(r_vec1)
+    r2 = np.linalg.norm(r_vec2)
+    a_grav1 = -G * M * r_vec1 / r1**3
+    a_grav2 = -G * M * r_vec2 / r2**3
+    schwarz1 = (3 * G * M) / (r1 * c**2) * a_grav1
+    schwarz2 = (3 * G * M) / (r2 * c**2) * a_grav2
+    L1 = np.cross(r_vec1, v_vec1)
+    L2 = np.cross(r_vec2, v_vec2)
+    kerr1 = (2 * G * a_spin / (c**2 * r1**3)) * np.cross(L1, r_vec1)
+    kerr2 = (2 * G * a_spin / (c**2 * r2**3)) * np.cross(L2, r_vec2)
+    a1 = a_grav1 + schwarz1 + kerr1
+    a2 = a_grav2 + schwarz2 + kerr2
+    return [vx1, vy1, vz1, *a1, vx2, vy2, vz2, *a2]
+
+# ----------------------------
+# Time Integration
+# ----------------------------
+T_orbit = 2 * np.pi * np.sqrt(a**3 / (G * M))  # Kepler's 3rd law
+num_orbits = 15
+t_span = (0, num_orbits * T_orbit)
+t_eval = np.linspace(*t_span, 5000)
+
+sol = solve_ivp(derivatives, t_span, initial_conditions_star_1 + initial_conditions_star_2, t_eval=t_eval)
+
+x1, y1, z1 = sol.y[0]/AU, sol.y[1]/AU, sol.y[2]/AU
+x2, y2, z2 = sol.y[6]/AU, sol.y[7]/AU, sol.y[8]/AU
+
+# ----------------------------
+# Animation Frames
+# ----------------------------
+frames = []
+for i in range(2, len(x1), 2):
+    frames.append(go.Frame(data=[
+        go.Scatter3d(x=x1[:i], y=y1[:i], z=z1[:i], mode='lines', line=dict(color='blue', width=3)),
+        go.Scatter3d(x=x2[:i], y=y2[:i], z=z2[:i], mode='lines', line=dict(color='green', width=3)),
+        go.Scatter3d(x=[x1[i-1]], y=[y1[i-1]], z=[z1[i-1]], mode='markers', marker=dict(size=5, color='red')),
+        go.Scatter3d(x=[x2[i-1]], y=[y2[i-1]], z=[z2[i-1]], mode='markers', marker=dict(size=5, color='yellow')),
+        go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=6, color='black'), name='Sgr A*')
+    ]))
+
+# ----------------------------
+# Layout and Figure
+# ----------------------------
+layout = go.Layout(
+    title='Two Stars Orbiting a Kerr Black Hole (Enhanced Relativistic Precession)',
+    scene=dict(
+        xaxis_title='x [AU]',
+        yaxis_title='y [AU]',
+        zaxis_title='z [AU]',
+        aspectmode='data'
+    ),
+    updatemenus=[dict(
+        type='buttons',
+        showactive=False,
+        buttons=[
+            dict(label='Play', method='animate', args=[None, {"frame": {"duration": 50, "redraw": True},
+                                                              "fromcurrent": True, "mode": "immediate"}]),
+            dict(label='Pause', method='animate', args=[[None], {"mode": "immediate", "frame": {"duration": 0}}])
+        ]
+    )]
+)
+
+fig = go.Figure(
+    data=[
+        go.Scatter3d(x=[x1[0]], y=[y1[0]], z=[z1[0]], mode='lines', line=dict(color='blue', width=3)),
+        go.Scatter3d(x=[x1[0]], y=[y1[0]], z=[z1[0]], mode='markers', marker=dict(size=5, color='red')),
+        go.Scatter3d(x=[x2[0]], y=[y2[0]], z=[z2[0]], mode='lines', line=dict(color='green', width=3)),
+        go.Scatter3d(x=[x2[0]], y=[y2[0]], z=[z2[0]], mode='markers', marker=dict(size=5, color='yellow')),
+        go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=6, color='black'), name='Sgr A*')
+    ],
+    layout=layout,
+    frames=frames
+)
+
+fig.show()
