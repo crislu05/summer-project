@@ -1,0 +1,187 @@
+#not conserving energy, mutual forces included
+
+import numpy as np
+from scipy.integrate import solve_ivp
+import plotly.graph_objs as go
+import plotly.io as pio
+pio.renderers.default = 'browser'
+
+# ----------------------------
+# Constants
+# ----------------------------
+G = 6.67430e-11
+c = 3e8
+M = 8.2e36
+AU = 1.496e11
+a_spin = 0.9 * G * M / c**2
+m_star = 5e35  # Mass of each star in kg
+
+
+# ----------------------------
+# Orbital Parameters
+# ----------------------------
+e = 0.88
+r_peri = 1.8e13
+a = r_peri / (1 - e)                      # Semi-major axis
+r_apo = a * (1 + e)                       # Apocenter distance
+
+# Speeds at pericenter and apocenter
+v_peri = np.sqrt(G * M * (1 + e) / r_peri)
+v_apo = np.sqrt(G * M * (1 - e) / r_apo)
+
+# ----------------------------
+# Initial Conditions for Star 1 and Star 2 with Inclination
+# ----------------------------
+inclination_angle = np.radians(60)  # 60 degrees inclination to the equatorial plane (more dramatic)
+azimuth_angle = np.radians(90)  # Angle in the x-y plane (90 degrees to show difference)
+
+# Transformation matrix for the inclination and azimuth rotation
+def rotate_coordinates(x, y, z, inclination, azimuth):
+    # Rotate around z-axis (azimuthal angle)
+    x_rot = x * np.cos(azimuth) - y * np.sin(azimuth)
+    y_rot = x * np.sin(azimuth) + y * np.cos(azimuth)
+    z_rot = z
+
+    # Rotate around x-axis (inclination angle)
+    x_final = x_rot
+    y_final = y_rot * np.cos(inclination) - z_rot * np.sin(inclination)
+    z_final = y_rot * np.sin(inclination) + z_rot * np.cos(inclination)
+    
+    return x_final, y_final, z_final
+
+# Star 1 starts at pericenter
+initial_conditions_star_1 = [
+    r_peri, 0, 0.2 * r_peri,  # position (x, y, z)
+    0, v_peri, 0.1 * v_peri  # velocity (vx, vy, vz)
+]
+# Rotate Star 1's initial conditions
+initial_conditions_star_1[0], initial_conditions_star_1[1], initial_conditions_star_1[2] = rotate_coordinates(
+    initial_conditions_star_1[0], initial_conditions_star_1[1], initial_conditions_star_1[2],
+    inclination_angle, azimuth_angle
+)
+# Velocity needs to be adjusted for inclination and azimuth
+vx1, vy1, vz1 = initial_conditions_star_1[3], initial_conditions_star_1[4], initial_conditions_star_1[5]
+vx1, vy1, vz1 = rotate_coordinates(vx1, vy1, vz1, inclination_angle, azimuth_angle)
+initial_conditions_star_1[3], initial_conditions_star_1[4], initial_conditions_star_1[5] = vx1, vy1, vz1
+
+# Star 2 starts at apocenter, on opposite side
+initial_conditions_star_2 = [
+    -r_apo, 0, 0.2 * r_apo,
+    0, -v_apo, -0.1 * v_apo
+]
+# Rotate Star 2's initial conditions
+initial_conditions_star_2[0], initial_conditions_star_2[1], initial_conditions_star_2[2] = rotate_coordinates(
+    initial_conditions_star_2[0], initial_conditions_star_2[1], initial_conditions_star_2[2],
+    inclination_angle, azimuth_angle
+)
+# Velocity needs to be adjusted for inclination and azimuth
+vx2, vy2, vz2 = initial_conditions_star_2[3], initial_conditions_star_2[4], initial_conditions_star_2[5]
+vx2, vy2, vz2 = rotate_coordinates(vx2, vy2, vz2, inclination_angle, azimuth_angle)
+initial_conditions_star_2[3], initial_conditions_star_2[4], initial_conditions_star_2[5] = vx2, vy2, vz2
+
+
+# ----------------------------
+# Differential Equations (Updated for Schwarzschild Precession)
+# ----------------------------
+def derivatives(t, y):
+    x1, y1, z1, vx1, vy1, vz1, x2, y2, z2, vx2, vy2, vz2 = y
+
+    r_vec1 = np.array([x1, y1, z1])
+    v_vec1 = np.array([vx1, vy1, vz1])
+    r_vec2 = np.array([x2, y2, z2])
+    v_vec2 = np.array([vx2, vy2, vz2])
+
+    r1 = np.linalg.norm(r_vec1)
+    r2 = np.linalg.norm(r_vec2)
+
+    # Mutual gravitational interaction
+    r12_vec = r_vec2 - r_vec1
+    r21_vec = -r12_vec
+    r12 = np.linalg.norm(r12_vec)
+
+    a1_self = G * m_star * r12_vec / r12**3  # Acceleration on star 1 due to star 2
+    a2_self = G * m_star * r21_vec / r12**3  # Acceleration on star 2 due to star 1
+
+    # Angular momentum
+    L1 = np.cross(r_vec1, v_vec1)
+    L2 = np.cross(r_vec2, v_vec2)
+    L1_mag = np.linalg.norm(L1)
+    L2_mag = np.linalg.norm(L2)
+
+    # Schwarzschild correction
+    a1_schwarz = -G * M * r_vec1 / r1**3 * (1 + 3 * L1_mag**2 / (r1**2 * c**2))
+    a2_schwarz = -G * M * r_vec2 / r2**3 * (1 + 3 * L2_mag**2 / (r2**2 * c**2))
+
+    # Kerr correction
+    a1_kerr = (2 * G * a_spin / (c**2 * r1**3)) * np.cross(L1, r_vec1)
+    a2_kerr = (2 * G * a_spin / (c**2 * r2**3)) * np.cross(L2, r_vec2)
+
+    # Total acceleration (Schwarzschild + Kerr + mutual gravity)
+    a1_total = a1_schwarz + a1_kerr + a1_self
+    a2_total = a2_schwarz + a2_kerr + a2_self
+
+    return [vx1, vy1, vz1, *a1_total, vx2, vy2, vz2, *a2_total]
+
+
+
+# ----------------------------
+# Time Integration
+# ----------------------------
+T_orbit = 5.06e8
+num_orbits = 5
+t_span = (0, num_orbits * T_orbit)
+t_eval = np.linspace(*t_span, 2000)
+
+sol = solve_ivp(derivatives, t_span, initial_conditions_star_1 + initial_conditions_star_2, t_eval=t_eval)
+
+x1, y1, z1 = sol.y[0]/AU, sol.y[1]/AU, sol.y[2]/AU
+x2, y2, z2 = sol.y[6]/AU, sol.y[7]/AU, sol.y[8]/AU
+
+# ----------------------------
+# Animation Frames
+# ----------------------------
+frames = []
+for i in range(2, len(x1), 2):
+    frames.append(go.Frame(data=[
+        go.Scatter3d(x=x1[:i], y=y1[:i], z=z1[:i], mode='lines', line=dict(color='blue', width=3)),
+        go.Scatter3d(x=x2[:i], y=y2[:i], z=z2[:i], mode='lines', line=dict(color='green', width=3)),
+        go.Scatter3d(x=[x1[i-1]], y=[y1[i-1]], z=[z1[i-1]], mode='markers', marker=dict(size=5, color='red')),
+        go.Scatter3d(x=[x2[i-1]], y=[y2[i-1]], z=[z2[i-1]], mode='markers', marker=dict(size=5, color='yellow')),
+        go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=6, color='black'), name='Sgr A*')
+    ]))
+
+# ----------------------------
+# Layout and Figure
+# ----------------------------
+layout = go.Layout(
+    title='Two Stars Orbiting a Kerr Black Hole',
+    scene=dict(
+        xaxis_title='x [AU]',
+        yaxis_title='y [AU]',
+        zaxis_title='z [AU]',
+        aspectmode='data'
+    ),
+    updatemenus=[dict(
+        type='buttons',
+        showactive=False,
+        buttons=[
+            dict(label='Play', method='animate', args=[None, {"frame": {"duration": 50, "redraw": True},
+                                                              "fromcurrent": True, "mode": "immediate"}]),
+            dict(label='Pause', method='animate', args=[[None], {"mode": "immediate", "frame": {"duration": 0}}])
+        ]
+    )]
+)
+
+fig = go.Figure(
+    data=[
+        go.Scatter3d(x=[x1[0]], y=[y1[0]], z=[z1[0]], mode='lines', line=dict(color='blue', width=3)),
+        go.Scatter3d(x=[x1[0]], y=[y1[0]], z=[z1[0]], mode='markers', marker=dict(size=5, color='red')),
+        go.Scatter3d(x=[x2[0]], y=[y2[0]], z=[z2[0]], mode='lines', line=dict(color='green', width=3)),
+        go.Scatter3d(x=[x2[0]], y=[y2[0]], z=[z2[0]], mode='markers', marker=dict(size=5, color='yellow')),
+        go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=6, color='black'), name='Sgr A*')
+    ],
+    layout=layout,
+    frames=frames
+)
+
+fig.show()
