@@ -100,7 +100,7 @@ def derivatives(t, y):
 # Time Integration
 # ----------------------------
 T_orbit = 5.06e8
-num_orbits = 10
+num_orbits = 8
 t_span = (0, num_orbits * T_orbit)
 t_eval = np.linspace(*t_span, 2000)
 t_years = t_eval / (60 * 60 * 24 * 365.25)  # convert seconds to years
