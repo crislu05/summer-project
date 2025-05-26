@@ -1,0 +1,178 @@
+#mutual forces included, using RK45 not leapfrog, energy plot included
+import numpy as np
+from scipy.integrate import solve_ivp
+import plotly.graph_objs as go
+import plotly.io as pio
+pio.renderers.default = 'browser'
+
+# ----------------------------
+# Constants
+# ----------------------------
+G = 6.67430e-11
+c = 3e8
+M = 8.2e36
+AU = 1.496e11
+a_spin = 0.9 * G * M / c**2
+m_star = 5e35  # Mass of each star in kg
+
+# ----------------------------
+# Orbital Parameters
+# ----------------------------
+e = 0.88
+r_peri = 1.8e13
+a = r_peri / (1 - e)
+r_apo = a * (1 + e)
+
+v_peri = np.sqrt(G * M * (1 + e) / r_peri)
+v_apo = np.sqrt(G * M * (1 - e) / r_apo)
+
+
+# ----------------------------
+# Rotation Functions
+# ----------------------------
+def rotate_coordinates(x, y, z, inclination, azimuth):
+    x_rot = x * np.cos(azimuth) - y * np.sin(azimuth)
+    y_rot = x * np.sin(azimuth) + y * np.cos(azimuth)
+    z_rot = z
+
+    x_final = x_rot
+    y_final = y_rot * np.cos(inclination) - z_rot * np.sin(inclination)
+    z_final = y_rot * np.sin(inclination) + z_rot * np.cos(inclination)
+    return x_final, y_final, z_final
+
+def rotate_coordinates_y(x, y, z, inclination):
+    x_rot = x * np.cos(inclination) + z * np.sin(inclination)
+    y_rot = y
+    z_rot = -x * np.sin(inclination) + z * np.cos(inclination)
+    return x_rot, y_rot, z_rot
+
+# ----------------------------
+# Initial Conditions
+# ----------------------------
+
+N = 8  # Number of stars
+np.random.seed(42)
+positions = 1e13 * (np.random.rand(N, 3) - 0.5)
+velocities = 1e4 * (np.random.rand(N, 3) - 0.5)
+
+# Flatten to 1D list for solve_ivp
+y0 = np.hstack([positions, velocities]).flatten()
+# ----------------------------
+# Differential Equations
+# ----------------------------
+def nbody_derivatives(t, y):
+    y = y.reshape(N, 6)
+    pos = y[:, 0:3]
+    vel = y[:, 3:6]
+    acc = np.zeros_like(pos)
+
+    for i in range(N):
+        r_i = pos[i]
+        v_i = vel[i]
+        r_mag = np.linalg.norm(r_i)
+        L_i = np.cross(r_i, v_i)
+        L_mag = np.linalg.norm(L_i)
+
+        # Schwarzschild & Kerr terms
+        a_sch = -G * M * r_i / r_mag**3 * (1 + 3 * L_mag**2 / (r_mag**2 * c**2))
+        a_kerr = (2 * G * a_spin / (c**2 * r_mag**3)) * np.cross(L_i, r_i)
+
+        # Mutual gravity
+        a_mutual = np.zeros(3)
+        for j in range(N):
+            if i != j:
+                r_ij = pos[j] - r_i
+                dist = np.linalg.norm(r_ij)
+                a_mutual += G * m_star * r_ij / dist**3
+
+        acc[i] = a_sch + a_kerr + a_mutual
+
+    dydt = np.hstack([vel, acc]).flatten()
+    return dydt
+
+# ----------------------------
+# Time Integration
+# ----------------------------
+T = 1e9
+t_eval = np.linspace(0, T, 1500)
+sol = solve_ivp(nbody_derivatives, [0, T], y0, t_eval=t_eval)
+
+# ----------------------------
+# Animation Frames
+# ----------------------------
+
+# ----------------------------
+# Layout and Figure
+# ----------------------------
+fig = go.Figure()
+colors = ['red', 'blue', 'green', 'orange', 'purple']
+
+for i in range(N):
+    x = sol.y[i*6 + 0] / AU
+    y = sol.y[i*6 + 1] / AU
+    z = sol.y[i*6 + 2] / AU
+    fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='lines', line=dict(width=2, color=colors[i % len(colors)]), name=f'Star {i+1}'))
+
+fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=6, color='black'), name='Black Hole'))
+
+fig.update_layout(
+    title='N-body Kerr + Schwarzschild System',
+    scene=dict(xaxis_title='x [AU]', yaxis_title='y [AU]', zaxis_title='z [AU]'),
+    showlegend=True,
+    height=600
+)
+fig.show()
+
+# ----------------------------
+# Energy Monitoring and Plot
+# ----------------------------
+KE = []  # kinetic energy
+PE = []  # potential energy
+TE = []  # total energy
+
+for i in range(len(t_eval)):
+    KE_i = 0
+    PE_i = 0
+    PE_mutual = 0
+    positions = sol.y[0::6, i], sol.y[1::6, i], sol.y[2::6, i]
+    velocities = sol.y[3::6, i], sol.y[4::6, i], sol.y[5::6, i]
+
+    r = np.stack(positions, axis=1)  # shape (N, 3)
+    v = np.stack(velocities, axis=1)
+
+    # Kinetic energy
+    for j in range(N):
+        KE_i += 0.5 * m_star * np.dot(v[j], v[j])
+
+    # PE from black hole
+    for j in range(N):
+        r_mag = np.linalg.norm(r[j])
+        PE_i += -G * M * m_star / r_mag
+
+    # Mutual PE
+    for j in range(N):
+        for k in range(j+1, N):
+            r_jk = np.linalg.norm(r[j] - r[k])
+            PE_mutual += -G * m_star**2 / r_jk
+
+    KE.append(KE_i)
+    PE.append(PE_i + PE_mutual)
+    TE.append(KE[-1] + PE[-1])
+    
+import plotly.graph_objects as go
+
+t_years = t_eval / (60 * 60 * 24 * 365.25)  # convert to years
+
+energy_fig = go.Figure()
+energy_fig.add_trace(go.Scatter(x=t_years, y=KE, mode='lines', name='Kinetic Energy'))
+energy_fig.add_trace(go.Scatter(x=t_years, y=PE, mode='lines', name='Potential Energy'))
+energy_fig.add_trace(go.Scatter(x=t_years, y=TE, mode='lines', name='Total Energy'))
+
+energy_fig.update_layout(
+    title='System Energy Over Time',
+    xaxis_title='Time [years]',
+    yaxis_title='Energy [Joules]',
+    height=500
+)
+
+energy_fig.show()
